@@ -1,0 +1,23 @@
+var ROI = ee.Geometry.Point([-120.84, 37.74]);
+var image = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(ROI)
+            .filterDate('2022-01-01', '2022-12-17')
+            .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 1)
+            .median();
+Map.centerObject(ROI);            
+Map.addLayer(image, imageVisParam);
+
+var evi = image.expression(
+              '2.5 * ((B8 - B4)/(B8 + 6 * B4 - 7.5 * B2 + 1))',{
+                'B2': image.select('B2').multiply(0.0001), //Blue
+                'B4': image.select('B4').multiply(0.0001), //Red
+                'B8': image.select('B8').multiply(0.0001), //NIR
+              });
+              
+Map.addLayer(evi, {min: -0.06, max: 0.84, palette:['yellow', 'white', 'green']}, 'EVI');
+
+var LAI = evi.expression('(3.681*evi-0.118)', {
+  'evi': evi
+});
+
+Map.addLayer(LAI, {min: 0.46973449815595375, max: 3.1197809286090625, palette:['grey', 'white', 'green']}, 'LAI');
