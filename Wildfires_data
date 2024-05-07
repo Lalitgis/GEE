@@ -1,0 +1,22 @@
+//Creat or upload your area of interest (aoi)
+var images = ee.ImageCollection('NASA/LANCE/NOAA20_VIIRS/C2')
+                   .filterDate('2023-10-08', '2024-05-10')
+var band_vis = {
+  min:280.0,
+  max: 400.0,
+  palette: ['yellow', 'orange', 'red', 'white', 'darkred'],
+  bands: [
+    'Bright_ti4',
+  ],
+}
+var nepal = images.mean().clip(aoi).toFloat();
+// Map.centerObject(aoi,7)
+Map.addLayer(nepal, band_vis, 'NOAA nrt firms')
+
+Export.image.toDrive({
+  image: nepal,
+  description: 'Nepal fire', 
+  folder: 'Lalit_GEE', 
+  region: aoi,
+  maxPixels: 1e13})
+  
