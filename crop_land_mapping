@@ -1,0 +1,65 @@
+//Define or upload your shape file here and named as aoi 
+var dataset = ee.Image('USGS/GFSAD1000_V1');
+var cropMask = dataset.select('landcover').clip(aoi);
+var cropMaskVis = {
+  min: 0.0,
+  max: 5.0,
+  palette: ['black', 'orange', 'brown', '02a50f', 'green', 'yellow'],
+};
+
+// Define the legend colors and labels
+var legendColors = ['black', 'orange', 'brown', '02a50f', 'green', 'yellow'];
+var legendLabels = ['Unclassified', 'Cropland/Natural Vegetation Mosaic', 'Cropland (Irrigated/ Rainfed)', 'Cropland/ Rainfed', 'Grassland', 'Tree Cover'];
+
+// Create the legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'Crop Types',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+
+legend.add(legendTitle);
+
+// Add the legend entries
+for (var i = 0; i < legendColors.length; i++) {
+  var color = legendColors[i];
+  var label = legendLabels[i];
+  var symbol = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+  var row = ui.Panel({
+    widgets: [
+      symbol,
+      ui.Label({
+        value: label
+      })
+    ],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+  legend.add(row);
+}
+
+// Add legend to the map
+Map.add(legend);
+
+// Center the map on the area of interest
+Map.centerObject(aoi, 8);
+
+// Add crop mask layer to the map
+Map.addLayer(cropMask, cropMaskVis, 'Crop Mask');
