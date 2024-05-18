@@ -1,0 +1,133 @@
+// Load Datasets
+
+// geoBoundries Admin Boundaries
+var admin1 = ee.FeatureCollection("projects/sat-io/open-datasets/geoboundaries/CGAZ_ADM1");
+
+// EOG VIIRS Annual Composites
+var ntlCollection = ee.ImageCollection("NOAA/VIIRS/DNB/ANNUAL_V21");
+
+// MODIS Land Cover Type Yearly
+var modisLandcover = ee.ImageCollection('MODIS/061/MCD12Q1');
+
+// Map.addLayer(admin1);
+
+var region = 'California';
+
+var admin1Filtered = admin1.filter(ee.Filter.eq('shapeName', region));
+// extract only geometry
+var geometry = admin1Filtered.geometry();
+Map.addLayer(geometry, {color:'gray'}, 'Geometry');
+
+
+// NTL dataset
+
+print(ntlCollection);
+
+var year = 2020;
+var startDate = ee.Date.fromYMD(year, 1,1);
+var endDate = startDate.advance(1, 'year');
+
+// select band
+
+var band = 'average';
+var ntlFiltered = ntlCollection
+                  .filter(ee.Filter.date(startDate, endDate))
+                  .select(band);
+                  
+// print(ntlFiltered);
+
+var ntlImage = ntlFiltered.first();
+print(ntlImage);
+
+// Visualize the image
+
+// Map.addLayer(ntlImage, {}, 'NTL Image');
+
+var palette = ['#253494', '#2c7fb8', '#41b6c4', '#a1dab4', '#ffffcc']
+var visParams= {
+  min: 0,
+  max: 50,
+  palette: palette
+}
+
+Map.addLayer(ntlImage.clip(geometry), visParams, 'NTL Image');
+
+// Calcualte the sum of nighttime lights within the region
+// reduce regions
+// To find out the scale of any image (463.83)
+print(ntlImage.projection().nominalScale())
+
+// Make a var of resolution
+var resolution = ntlImage.projection().nominalScale()
+var stats = ntlImage.reduceRegion({
+  reducer: ee.Reducer.sum(), 
+  geometry: geometry, 
+  scale: resolution, 
+  maxPixels: 1e10, 
+  tileScale: 16});
+  
+  print(stats)
+// sum of average light value instensity: 3992788.777047555
+  
+print(stats.getNumber('average'))
+
+//Print modis landcover
+
+print(modisLandcover);
+
+var classification = 'LC_Type1';
+
+var landcoverFiltered = modisLandcover
+                      .filter(ee.Filter.date(startDate, endDate))
+                      .select(classification);
+                       
+// print(landcoverFiltered);
+
+var landcoverImage = landcoverFiltered.first();
+
+var igbpLandCoverVis = {
+  min: 1.0,
+  max: 17.0,
+  palette: [
+    '05450a', '086a10', '54a708', '78d203', '009900', 'c6b044', 'dcd159',
+    'dade48', 'fbff13', 'b6ff05', '27ff87', 'c24f44', 'a5a5a5', 'ff6d4c',
+    '69fff8', 'f9ffa4', '1c0dff'
+  ],
+};
+
+Map.addLayer(landcoverImage.clip(geometry), igbpLandCoverVis, 'lulc');
+
+// Now we want to extract pixels value of urban and see how much light intensity does it contribute, first see the IC description
+
+var urban = landcoverImage.eq(13).rename('urban');
+var agriculture = landcoverImage.eq(10)
+                  .or(landcoverImage.eq(12)
+                  .or(landcoverImage.eq(14)))
+//The updateMask will only select those pixels with urban giving it 1 and othe pixel zero
+var urbanStats = ntlImage.updateMask(urban).reduceRegion({
+  reducer: ee.Reducer.sum(), 
+  geometry: geometry, 
+  scale: resolution, 
+  maxPixels: 1e10, 
+  tileScale: 16});
+  
+print(urbanStats);
+  
+var urbanSol = urbanStats.getNumber(band);
+
+print(urbanSol);
+
+// For agriculture
+
+var agriStats = ntlImage.updateMask(agriculture).reduceRegion({
+  reducer: ee.Reducer.sum(), 
+  geometry: geometry, 
+  scale: resolution, 
+  maxPixels: 1e10, 
+  tileScale: 16});
+  
+print(agriStats);
+  
+var agriSol = agriStats.getNumber(band);
+
+print(agriSol);
