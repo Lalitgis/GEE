@@ -1,0 +1,160 @@
+// Load AOI from assets
+// Load AOI from assets
+var AOI = table.filter(ee.Filter.eq('DIST_EN', 'Dailekh'));
+
+// Center map to AOI
+Map.centerObject(AOI, 10);
+
+// ----------------------------------------------
+// LAND COVER ANALYSIS (Baseline Study)
+// ----------------------------------------------
+
+// Load ESA WorldCover 2020 dataset
+var lulc2020 = ee.Image("ESA/WorldCover/v100/2020").clip(AOI);
+
+// Visualization parameters for LULC
+var lulcVis = {
+  min: 10,
+  max: 95,
+  palette: [
+    '419BDF', '397D49', '88B053', 'E49635', 'DFC35A',
+    'C4281B', 'A59B8F', 'B39FE1', '89F2FF', '1C0D02'
+  ]
+};
+
+// Add LULC layer to the map
+Map.addLayer(lulc2020, lulcVis, 'Land Cover 2020');
+
+// Add legend for LULC
+var lulcLegend = ui.Panel({style: {position: 'bottom-left'}});
+lulcLegend.add(ui.Label('Land Cover Legend', {fontWeight: 'bold', fontSize: '16px'}));
+var lulcClasses = [
+  {name: 'Water', color: '419BDF'},
+  {name: 'Trees', color: '397D49'},
+  {name: 'Grass', color: '88B053'},
+  {name: 'Crops', color: 'E49635'},
+  {name: 'Shrub', color: 'DFC35A'},
+  {name: 'Built-up', color: 'C4281B'},
+  {name: 'Bare Ground', color: 'A59B8F'},
+  {name: 'Snow/Ice', color: 'B39FE1'},
+  {name: 'Wetlands', color: '89F2FF'},
+];
+lulcClasses.forEach(function(classObj) {
+  lulcLegend.add(
+    ui.Panel([
+      ui.Label({style: {backgroundColor: classObj.color, padding: '8px', margin: '4px'}}),
+      ui.Label(classObj.name)
+    ], ui.Panel.Layout.Flow('horizontal'))
+  );
+});
+Map.add(lulcLegend);
+
+// Export LULC data to Google Drive
+Export.image.toDrive({
+  image: lulc2020,
+  description: 'LULC_2020',
+  scale: 30,
+  region: AOI.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+
+// ----------------------------------------------
+// URBAN EXPANSION ANALYSIS
+// ----------------------------------------------
+
+// Function to calculate NDBI for a given year
+function getNDBI(year) {
+  var startDate = ee.Date.fromYMD(year, 1, 1);
+  var endDate = ee.Date.fromYMD(year, 12, 31);
+
+  var landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+    .filterBounds(AOI)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lt('CLOUD_COVER', 20))
+    .select(['SR_B6', 'SR_B5']); // SWIR1 (B6) and NIR (B5)
+
+  var median = landsat.median().clip(AOI);
+  var ndbi = median.normalizedDifference(['SR_B6', 'SR_B5']).rename('NDBI');
+  return ndbi.set('year', year);
+}
+
+// Calculate NDBI for years 2020 to 2023
+var years = ee.List.sequence(2020, 2023);
+var ndbiCollection = ee.ImageCollection(years.map(getNDBI));
+
+// Urban threshold for NDBI
+var urbanThreshold = 0.2;
+
+// Detect urban areas
+var urbanExpansion = ndbiCollection.map(function(image) {
+  var urban = image.gt(urbanThreshold).selfMask();
+  return urban.set('year', image.get('year'));
+});
+
+// Add urban expansion layers to the map
+years.evaluate(function(yearList) {
+  yearList.forEach(function(year) {
+    var image = urbanExpansion.filter(ee.Filter.eq('year', year)).first();
+    Map.addLayer(image, {palette: ['red']}, 'Urban Expansion ' + year);
+  });
+});
+
+// Calculate urban area (sq km)
+var urbanStats = urbanExpansion.map(function(image) {
+  var area = image.multiply(ee.Image.pixelArea()).reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: AOI,
+    scale: 30,
+    maxPixels: 1e13
+  });
+  return ee.Feature(null, {
+    'year': image.get('year'),
+    'urban_area_sqkm': ee.Number(area.get('NDBI')).divide(1e6)
+  });
+});
+
+var urbanFeatureCollection = ee.FeatureCollection(urbanStats);
+print('Urban Expansion Statistics:', urbanFeatureCollection);
+
+// Export urban expansion statistics to Google Drive
+Export.table.toDrive({
+  collection: urbanFeatureCollection,
+  description: 'Urban_Expansion_Stats',
+  fileFormat: 'CSV'
+});
+
+// ----------------------------------------------
+// VEGETATION MONITORING (NDVI Trends)
+// ----------------------------------------------
+
+// Load MODIS NDVI data
+var ndviCollection = ee.ImageCollection("MODIS/006/MOD13A2")
+  .filterBounds(AOI)
+  .filterDate('2020-01-01', '2023-12-31')
+  .select('NDVI');
+
+// Generate NDVI trend chart
+var ndviChart = ui.Chart.image.series({
+  imageCollection: ndviCollection,
+  region: AOI,
+  reducer: ee.Reducer.mean(),
+  scale: 500
+}).setOptions({
+  title: 'NDVI Trend (2020-2023)',
+  hAxis: {title: 'Time'},
+  vAxis: {title: 'NDVI'},
+  lineWidth: 2,
+  pointSize: 4
+});
+print(ndviChart);
+
+// Export NDVI data as GeoTIFF
+Export.image.toDrive({
+  image: ndviCollection.mean().clip(AOI),
+  description: 'NDVI_2020_2023',
+  scale: 500,
+  region: AOI.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
