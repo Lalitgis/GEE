@@ -1,0 +1,135 @@
+// Load AOI from assets
+var AOI = table.filter(ee.Filter.eq('DIST_EN', 'Dailekh'));
+
+
+// Define the analysis period
+var startDate = '2024-01-01';
+var endDate = '2024-12-31';
+
+// Load Sentinel-1 SAR data (VV and VH polarization for soil moisture)
+var sentinel1 = ee.ImageCollection("COPERNICUS/S1_GRD")
+  .filterBounds(AOI)
+  .filterDate(startDate, endDate)
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+  .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'))
+  .select(['VV', 'VH'])
+  .median()
+  .clip(AOI);
+
+// Compute Radar-based Soil Moisture Index (RSMI)
+var RSMI = sentinel1.expression(
+  '(VH - VV) / (VH + VV)', {
+    'VH': sentinel1.select('VH'),
+    'VV': sentinel1.select('VV')
+  }).rename('RSMI');
+
+// Load Sentinel-2 optical data for NDVI-based soil moisture
+var sentinel2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+  .filterBounds(AOI)
+  .filterDate(startDate, endDate)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+  .select(['B8', 'B4', 'B11'])  // NIR, RED, SWIR bands
+  .median()
+  .clip(AOI);
+
+// Compute NDVI (for soil moisture estimation)
+var NDVI = sentinel2.normalizedDifference(['B8', 'B4']).rename('NDVI');
+
+// Compute NDWI (Normalized Difference Water Index)
+var NDWI = sentinel2.normalizedDifference(['B8', 'B11']).rename('NDWI');
+
+// Combine indices for better soil moisture analysis
+var soilMoistureComposite = sentinel2.addBands(RSMI).addBands(NDVI).addBands(NDWI);
+
+// Visualization parameters
+var visParams = {
+  min: -1,
+  max: 1,
+  palette: ['brown', 'yellow', 'green', 'blue']
+};
+
+// Add layers to the map
+Map.centerObject(AOI, 8);
+Map.addLayer(RSMI, visParams, 'Radar Soil Moisture Index (RSMI)');
+Map.addLayer(NDVI, {min: 0, max: 1, palette: ['brown', 'green']}, 'NDVI');
+Map.addLayer(NDWI, {min: -1, max: 1, palette: ['yellow', 'blue']}, 'NDWI');
+
+// Export the soil moisture results to Google Drive
+Export.image.toDrive({
+  image: soilMoistureComposite.select(['RSMI', 'NDVI', 'NDWI']),
+  description: 'Soil_Moisture_Analysis_AOI',
+  scale: 30,
+  region: AOI.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+
+print('Soil moisture analysis completed.');
+
+// ----------------------------------------------
+// CHARTS AND STATISTICAL ANALYSIS
+// ----------------------------------------------
+
+// Function to calculate region-based statistics
+function calculateStats(image, region, indexName) {
+  var stats = image.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: region,
+    scale: 30,
+    bestEffort: true
+  });
+
+  return ee.Feature(null, {
+    'Index': indexName,
+    'Value': stats.get(indexName)
+  });
+}
+
+// Compute statistics for RSMI, NDVI, and NDWI
+var rsmiStats = calculateStats(RSMI, AOI, 'RSMI');
+var ndviStats = calculateStats(NDVI, AOI, 'NDVI');
+var ndwiStats = calculateStats(NDWI, AOI, 'NDWI');
+
+// Combine stats into a feature collection
+var statsCollection = ee.FeatureCollection([rsmiStats, ndviStats, ndwiStats]);
+
+// Print statistics in the console
+print('Soil Moisture Index Statistics:', statsCollection);
+
+// Create a chart for soil moisture analysis
+var chart = ui.Chart.feature.byFeature(statsCollection, 'Index', 'Value')
+  .setChartType('ColumnChart')
+  .setOptions({
+    title: 'Soil Moisture Index Analysis',
+    hAxis: {title: 'Index'},
+    vAxis: {title: 'Mean Value'},
+    colors: ['#1f77b4', '#ff7f0e', '#2ca02c']
+  });
+
+print(chart);
+
+// Export statistics to Google Drive as CSV
+Export.table.toDrive({
+  collection: statsCollection,
+  description: 'Soil_Moisture_Statistics',
+  fileFormat: 'CSV'
+});
+
+// Convert all bands to Float32 to ensure compatibility
+var soilMoistureComposite = soilMoistureComposite
+  .select(['RSMI', 'NDVI', 'NDWI'])
+  .toFloat();
+
+// Export the soil moisture results to Google Drive
+Export.image.toDrive({
+  image: soilMoistureComposite,
+  description: 'Soil_Moisture_Analysis_AOI',
+  scale: 30,
+  region: AOI.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+
+print('Soil moisture analysis export initiated.');
